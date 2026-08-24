@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "chejis3",
+			"path": "../chejis3"
+		},
+		{
+			"name": "cheji103",
+			"path": "../cheji103"
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHEJI T-Box 串口监视器</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0a0e14;color:#e0e0e0;font-family:Consolas,monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:15px}
+  h1{color:#00c8ff;font-size:18px;margin-bottom:8px}
+  .bar{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  button{padding:8px 18px;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold}
+  .c{background:#00c8ff;color:#000}.c.on{background:#00e676}
+  .r{background:#333;color:#aaa}
+  .s{font-size:12px;color:#708090}.s.on{color:#00e676}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:100%;max-width:800px;margin-bottom:12px}
+  .card{background:#141b23;border:1px solid #1a2430;border-radius:8px;padding:14px 16px;text-align:center}
+  .card .v{font-size:28px;font-weight:bold}
+  .card .l{font-size:11px;color:#708090;margin-top:3px}
+  .c1{color:#00c8ff}.c2{color:#00e676}.c3{color:#ffa000}.c4{color:#ff5252}.c5{color:#e0e0e0}
+  .log{width:100%;max-width:800px;height:250px;background:#0c141e;border:1px solid #1a2430;border-radius:6px;padding:10px;overflow-y:auto;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+  .log .tx{color:#00c8ff}.log .rx{color:#00e676}.log .info{color:#708090}.log .err{color:#ff5252}.log .warn{color:#ffa000}
+  small{color:#404850;margin-top:8px}
+</style>
+</head>
+<body>
+
+<h1>CHEJI T-Box 串口监视器</h1>
+
+<div class="bar">
+  <button class="c" id="btn" onclick="tog()">Connect</button>
+  <select id="baud" style="background:#0c141e;border:1px solid #1a2430;color:#e0e0e0;padding:6px 10px;border-radius:4px;font-size:12px">
+    <option value="115200" selected>115200</option>
+    <option value="921600">921600</option>
+  </select>
+  <span class="s" id="st">Not connected</span>
+  <button class="r" onclick="clr()">Clear</button>
+</div>
+
+<div class="grid">
+  <div class="card"><div class="v c1" id="spd">--</div><div class="l">Speed (km/h)</div></div>
+  <div class="card"><div class="v c2" id="soc">--</div><div class="l">SOC (%)</div></div>
+  <div class="card"><div class="v c1" id="rpm">--</div><div class="l">Motor RPM</div></div>
+  <div class="card"><div class="v c3" id="volt">--</div><div class="l">Voltage (V)</div></div>
+  <div class="card"><div class="v c5" id="curr">--</div><div class="l">Current (A)</div></div>
+  <div class="card"><div class="v c5" id="state">--</div><div class="l">Vehicle State</div></div>
+  <div class="card"><div class="v c5" id="mode">--</div><div class="l">Drive Mode</div></div>
+  <div class="card"><div class="v c4" id="err">--</div><div class="l">Fault</div></div>
+</div>
+
+<div class="log" id="log">等待连接...</div>
+<small>Chrome/Edge | 选ESP32-S3的COM口 | 115200</small>
+
+<script>
+let port=null,reader=null;
+
+function lg(m,c){let t=new Date().toLocaleTimeString();log.innerHTML+=`<span class="${c}">[${t}] ${m}</span>\n`;log.scrollTop=log.scrollHeight}
+function clr(){log.innerHTML=''}
+
+async function tog(){
+ if(port){await port.close();port=null;reader=null;btn.textContent='Connect';btn.classList.remove('on');st.textContent='Not connected';st.classList.remove('on');return}
+ try{
+  port=await navigator.serial.requestPort();
+  await port.open({baudRate:+baud.value});
+  btn.textContent='Disconnect';btn.classList.add('on');st.textContent='Connected @'+baud.value;st.classList.add('on');
+  lg('Port opened','rx');
+  readLoop();
+ }catch(e){lg('Failed: '+e.message,'err');port=null}
+}
+
+async function readLoop(){
+ let td=new TextDecoder();let buf='';
+ while(port&&port.readable){try{
+  reader=port.readable.getReader();
+  while(true){
+   let{value,done}=await reader.read();if(done)break;
+   buf+=td.decode(value,{stream:true});
+   let lines=buf.split('\n');buf=lines.pop();
+   for(let l of lines){
+    if(!l.trim())continue;
+    if(l.includes('[MQTT]'))lg(l,'tx');
+    else if(l.includes('Pub:')){
+     lg(l,'tx');
+     try{
+      let j=JSON.parse(l.substring(l.indexOf('{')));
+      let sn=['SLEEP','ACC','IGN','DRIVE','CHARGE','FAULT'];
+      let mn=['ECO','COMFORT','SPORT'];
+      spd.textContent=(j.speed/10).toFixed(1);
+      soc.textContent=j.soc;
+      rpm.textContent=j.rpm;
+      volt.textContent=(j.volt/10).toFixed(1);
+      curr.textContent=(j.curr/10).toFixed(1);
+      state.textContent=sn[j.state]||j.state;
+      mode.textContent=mn[j.mode]||j.mode;
+     }catch(e){}
+    }
+    else if(l.includes('WiFi')||l.includes('IP:'))lg(l,'rx');
+    else if(l.includes('FAILED')||l.includes('ERROR'))lg(l,'err');
+    else if(l.includes('OK')||l.includes('Connected'))lg(l,'rx');
+    else lg(l,'info');
+   }
+  }
+ }catch(e){if(e.name!='AbortError')lg('Error: '+e.message,'err')}}
+}
+
+if(!('serial' in navigator)){lg('Web Serial not available. Use Chrome/Edge.','err');btn.disabled=true}
+</script>
+</body>
+</html>
